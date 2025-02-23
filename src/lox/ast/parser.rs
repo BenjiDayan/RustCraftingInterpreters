@@ -113,7 +113,7 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, Box<dyn Error>> {
         let current_token = self.peek();
-        println!("current_token in primary: {current_token:?}");
+        // println!("current_token in primary: {current_token:?}");
 
 
         let out_token = match current_token {

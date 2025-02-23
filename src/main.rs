@@ -9,12 +9,12 @@ use token_type::Token;
 use token_type::Literal;
 
 mod lox;
-use lox::ast::Expr;
-use lox::ast::Binary;
-use lox::ast::parser;
+use lox::ast::{Expr, Binary, parser};
+use lox::ast::interpreter::{RuntimeError, Interp};
 mod scanner;
 
 static mut HAD_ERROR: bool = false;
+static mut HAD_RUNTIME_ERROR: bool = false;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -44,7 +44,6 @@ fn main() {
     );
 
     println!("token: {:?}", token.to_string());
-
 
 
     if args.len() > 2 {
@@ -102,8 +101,12 @@ fn run_file(path: String) {
     run(&contents);
     unsafe{
     if HAD_ERROR {
-        std::process::exit(0);
-    }}
+        std::process::exit(65);
+    }
+    if HAD_RUNTIME_ERROR {
+        std::process::exit(70);
+    }
+    }
 }
 
 fn run_prompt() {
@@ -134,9 +137,15 @@ fn run(source: &String) {
     let mut S = scanner::Scanner::new(source.clone());
 
     let tokens: Vec<Token> = S.scan_tokens();
-    for token in tokens {
+    for token in &tokens {
         println!("{:?}", token);
     }
+
+    let mut my_parser = parser::Parser::new(tokens);
+    let expr = my_parser.parse().unwrap();
+
+    let mut my_interpreter = Interp;
+    my_interpreter.interpret(&expr);
 }
 
 pub fn error(line: usize, message: &str) {
@@ -145,4 +154,9 @@ pub fn error(line: usize, message: &str) {
 
 fn report(line: usize, location: &str, message: &str) {
     eprintln!("[line {}] Error{}: {}", line, location, message);
+}
+
+fn runtime_error(err: RuntimeError) {
+    println!("{err:?}\n[line {}]", err.token.line);
+    unsafe { HAD_RUNTIME_ERROR = true };
 }

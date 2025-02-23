@@ -3,11 +3,45 @@ use crate::TokenType;
 use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Unary, Value, Token};
 use std::{any::{Any, TypeId}, fmt};
 
+// use main::runtime_error func
+use crate::runtime_error;
+
+
+
 pub struct Interp;
 
-//NB: I don't think with this matching system, we need to "check number operand"
+impl Interp {
+    pub fn interpret(&self, expr: &Expr) {
+        let out = self.visit_expr(expr);
+        if let Ok(val) = &out {
+            let val_string: String = match val {
+                Value::Number(s) => {
+                    let num_string = format!("{s}");
+                    // if val_string ends with ".0" then remove the ".0"
+                    if num_string.ends_with(".0") {
+                        // snip off last 2 characters
+                        num_string[..num_string.len()-2].to_string()
+                    } else {
+                        num_string
+                    }
+                }
+                Value::String(s) => format!("\"{s}\""),
+                Value::Boolean(b) => b.to_string(),
+                Value::Nil => "nil".to_string(),
+            };
+            println!("{val_string}");
 
-impl ExprVisitor<Value> for Interp {
+        } else {
+            // println!("{out:?}");
+            runtime_error(out.unwrap_err());
+        }
+        // let out_string_rep = format!("{out:?}");
+        // println!("{}", out_string_rep);
+    }
+}
+
+//NB: I don't think with this matching system, we need to "check number operand"
+impl ExprVisitor<Result<Value>> for Interp {
     fn visit_expr(&self, expr: &Expr) -> Result<Value> {
         match expr {
             Expr::Binary(binary) => self.visit_binary(binary),
@@ -17,8 +51,8 @@ impl ExprVisitor<Value> for Interp {
         }
     }
     fn visit_binary(&self, binary: &Binary) -> Result<Value> {
-        let l = self.visit_expr(&binary.left);
-        let r = self.visit_expr(&binary.right);
+        let l = self.visit_expr(&binary.left)?;
+        let r = self.visit_expr(&binary.right)?;
 
 
         match binary.operator.token_type {
@@ -36,19 +70,20 @@ impl ExprVisitor<Value> for Interp {
                         TokenType::SLASH => Ok(Value::Number(a / b)),
                         TokenType::STAR => Ok(Value::Number(a * b)),
                         TokenType::PLUS => Ok(Value::Number(a + b)),
-                        _ => 
-                        
-                        panic!("Unexpected binary operator for numbers")
+                        _ => Err(RuntimeError::new(binary.operator.clone(), "Unexpected binary operator for numbers".to_string()))    
+                        //panic!("Unexpected binary operator for numbers")
                     }
                     }
                     (Value::String(a), Value::String(b)) => {
                         if let TokenType::PLUS = binary.operator.token_type {
                             Ok(Value::String(a.clone() + &b))
                         } else {
-                            panic!("Unexpected binary operator for strings")
+                            // panic!("Unexpected binary operator for strings")
+                            Err(RuntimeError::new(binary.operator.clone(), "Unexpected binary operator for strings".to_string()))
                         }
                     }
-                    _ => panic!("no more valid operators etc.")
+                    // _ => panic!("no more valid operators etc.")
+                    _ => Err(RuntimeError::new(binary.operator.clone(), "no more valid operators etc.".to_string()))
                 }
             }
         }
@@ -56,20 +91,22 @@ impl ExprVisitor<Value> for Interp {
 
 
     fn visit_unary(&self, unary: &Unary) -> Result<Value> {
-        let value = self.visit_expr(&unary.right);
+        let value = self.visit_expr(&unary.right)?;
         match unary.operator.token_type {
             TokenType::MINUS => {
                 if let Value::Number(num) = value {
                     Ok(Value::Number(-num))
                 } else {
-                    panic!("unary minus - value must be a number");
+                    // panic!("unary minus - value must be a number");
+                    Err(RuntimeError::new(unary.operator.clone(), "unary minus - value must be a number".to_string()))
                 }
             }
             TokenType::BANG => {
                 Ok(Value::Boolean(!is_truthy(&value)))
             }
             _ => {
-                panic!("Unexpected unary operator")
+                // panic!("Unexpected unary operator")
+                Err(RuntimeError::new(unary.operator.clone(), "Unexpected unary operator".to_string()))
             }
         }
     }
@@ -103,13 +140,14 @@ fn is_truthy(thing: &Value) -> bool {
 }
 
 #[derive(Debug, Clone)]
-struct RuntimeError{
-    token: Token
+pub struct RuntimeError{
+    pub token: Token,
+    pub message: String
 }
 
 impl RuntimeError {
-    fn new(token: Token) -> Self {
-        Self { token }
+    fn new(token: Token, message: String) -> Self {
+        Self { token, message }
     }
 }
 
@@ -117,7 +155,7 @@ pub type Result<T> = std::result::Result<T, RuntimeError>;
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Runtime error at token: {:?}; line: {:?}", self.token, self.token.line)
+        write!(f, "Runtime error at token: {:?}; line: {:?}; message: {:?}", self.token, self.token.line, self.message)
     }
 }
 
@@ -160,10 +198,11 @@ mod test {
         println!("asdf {:?}", temp.literal.val());
 
         let vec: Vec<i32> = vec![1,2,3];
-        println!("vec[3]: {:?}", vec.first().ok_or(RuntimeError::new(temp)));
+        println!("vec[3]: {:?}", vec.first().ok_or(RuntimeError::new(temp, "vec[3]".to_string())));
 
-        // let my_string = String::from("2 * (3 / -\"muffin\")");
-        let my_string = String::from("1 + 2 * 3");
+        let my_string = String::from("2 * (3 -\"muffin\")");
+        // let my_string = String::from("1 + 2.2 * 3");
+        // let my_string: String = String::from("\"hi there\" + \" how are you\"");
         let mut my_scanner = Scanner::new(my_string);
         let tokens = my_scanner.scan_tokens();
         println!("tokens: {tokens:?}");
@@ -179,9 +218,10 @@ mod test {
         println!("printed: {out}");
 
         let my_interpreter = Interp;
-        let out = my_interpreter.visit_expr(&expr);
-        println!("interpreted: {:?}", out);
-        println!("is truthy: {:?}", is_truthy(&out));
+        // let out = my_interpreter.visit_expr(&expr);
+        // println!("interpreted: {:?}", out);
+        my_interpreter.interpret(&expr);
+        // println!("is truthy: {:?}", is_truthy(&out));
         
     }
 }
