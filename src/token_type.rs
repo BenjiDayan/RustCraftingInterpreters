@@ -1,4 +1,9 @@
-#[derive(Debug, Clone)]
+use once_cell;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::any::Any;
+
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub(crate) enum TokenType {
   // Single-character tokens.
   LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE,
@@ -17,8 +22,31 @@ pub(crate) enum TokenType {
   AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR,
   PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE,
 
+  // operators
+
   EOF
 }
+
+pub(crate) static RESERVED_KEYWORDS: Lazy<HashMap<&str, TokenType>> = Lazy::new(|| {
+    HashMap::from([
+        ("and", TokenType::AND),
+        ("class", TokenType::CLASS),
+        ("else", TokenType::ELSE),
+        ("false", TokenType::FALSE),
+        ("for", TokenType::FOR),
+        ("fun", TokenType::FUN),
+        ("if", TokenType::IF),
+        ("nil", TokenType::NIL),
+        ("or", TokenType::OR),
+        ("print", TokenType::PRINT),
+        ("return", TokenType::RETURN),
+        ("super", TokenType::SUPER),
+        ("this", TokenType::THIS),
+        ("true", TokenType::TRUE),
+        ("var", TokenType::VAR),
+        ("while", TokenType::WHILE),
+    ])
+});
 
 
 #[derive(Debug, Clone)]
@@ -51,6 +79,26 @@ impl Token {
 // Example enum for Literal to replace Object
 #[derive(Debug, Clone)]
 pub enum Literal {
+    String(String),
+    Number(f64),
+    Boolean(bool),
+    Nil,
+}
+
+impl Literal {
+    pub fn val(&self) -> Value {
+        match self {
+            Literal::String(s) => Value::String(s.clone()),
+            Literal::Number(n) => Value::Number(*n),
+            Literal::Boolean(b) => Value::Boolean(*b),
+            Literal::Nil => Value::Nil,
+        }
+    }
+}
+
+// distinguished from Literal as this is interpreted rather than parsed. 
+#[derive(Debug, Clone)]
+pub enum Value {
     String(String),
     Number(f64),
     Boolean(bool),

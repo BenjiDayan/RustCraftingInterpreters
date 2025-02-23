@@ -1,18 +1,20 @@
 use std::io;
 use std::io::Write;
-use std::cmp::Ordering;
-use rand::Rng;
 use std::env;
-use std::ptr::null;
+
 
 mod token_type;
 use token_type::TokenType;
 use token_type::Token;
 use token_type::Literal;
 
+mod lox;
+use lox::ast::Expr;
+use lox::ast::Binary;
+use lox::ast::parser;
 mod scanner;
 
-static mut hadError: bool = false;
+static mut HAD_ERROR: bool = false;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,6 +26,14 @@ fn main() {
     println!("{}", word.chars().nth(3).unwrap());
 
     println!("token type: {:?}", TokenType::LEFT_PAREN);
+
+
+    // let boo: Binary = Binary {
+    //     left: Box::new(Expr),
+    //     right: Box::new(Expr),
+    //     operator: Token()
+    // };
+
 
     let token = Token::new(
         TokenType::STRING,
@@ -91,7 +101,7 @@ fn run_file(path: String) {
 
     run(&contents);
     unsafe{
-    if hadError {
+    if HAD_ERROR {
         std::process::exit(0);
     }}
 }
@@ -123,7 +133,7 @@ fn run(source: &String) {
     // println!("{line}");
     let mut S = scanner::Scanner::new(source.clone());
 
-    let tokens: Vec<Token> = S.scanTokens();
+    let tokens: Vec<Token> = S.scan_tokens();
     for token in tokens {
         println!("{:?}", token);
     }
