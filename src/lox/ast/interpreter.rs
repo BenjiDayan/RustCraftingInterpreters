@@ -1,6 +1,6 @@
 use crate::TokenType;
 
-use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Unary, Value, Token};
+use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Stmt, StmtVisitor, Token, Unary, Value, Variable, environment::Environment};
 use std::{any::{Any, TypeId}, fmt};
 
 // use main::runtime_error func
@@ -8,27 +8,41 @@ use crate::runtime_error;
 
 
 
-pub struct Interp;
+pub struct Interp {
+    environment: Environment
+}
+
+impl Interp {
+    pub fn new() -> Self {
+        Self {
+            environment: Environment::new()
+        }
+    }
+}
+
+pub fn stringify(val: &Value) -> String {
+    match val {
+        Value::Number(s) => {
+            let num_string = format!("{s}");
+            // if val_string ends with ".0" then remove the ".0"
+            if num_string.ends_with(".0") {
+                // snip off last 2 characters
+                num_string[..num_string.len()-2].to_string()
+            } else {
+                num_string
+            }
+        }
+        Value::String(s) => format!("\"{s}\""),
+        Value::Boolean(b) => b.to_string(),
+        Value::Nil => "nil".to_string(),
+    }
+}
 
 impl Interp {
     pub fn interpret(&self, expr: &Expr) {
         let out = self.visit_expr(expr);
         if let Ok(val) = &out {
-            let val_string: String = match val {
-                Value::Number(s) => {
-                    let num_string = format!("{s}");
-                    // if val_string ends with ".0" then remove the ".0"
-                    if num_string.ends_with(".0") {
-                        // snip off last 2 characters
-                        num_string[..num_string.len()-2].to_string()
-                    } else {
-                        num_string
-                    }
-                }
-                Value::String(s) => format!("\"{s}\""),
-                Value::Boolean(b) => b.to_string(),
-                Value::Nil => "nil".to_string(),
-            };
+            let val_string: String = stringify(&val);
             println!("{val_string}");
 
         } else {
@@ -38,18 +52,66 @@ impl Interp {
         // let out_string_rep = format!("{out:?}");
         // println!("{}", out_string_rep);
     }
+
+    pub fn interpret_stmts(&mut self, stmts: &Vec<Stmt>) -> Result<()> {
+        // visit each stmt one by one, evaluating. If any raise RuntimeError,
+        // we return error. o/w finally return Ok(())
+        for stmt in stmts {
+            let res = self.visit_statement(stmt)?;
+        }
+        Ok(())
+    }
 }
+
+
+// TODO - this whole visitor pattern - in rust could we instead do like
+// just a big match? Same for ExprVisitor.
+// For Stmt this is already an enum of two categories.
+// Expr actually has more categories??
+
+// Stmt -> expression / print -> Expr
+// but it seems that maybe this is so simple we don't setup so many trees for this.
+
+impl StmtVisitor<Result<()>> for Interp {
+    // fn visit_statement(&self, stmt: &Stmt) -> Result<()> {
+    //     match stmt {
+    //         Stmt::Expression(expr) => {
+    //             let val = self.visit_expr(expr)?;
+    //             //.expect("we evaluate the expression and discard its value. hopefully its valid");
+    //             return Ok(())
+    //         }
+    //         Stmt::Print(expr) => {
+    //             let val = self.visit_expr(expr)?;
+    //             println!("{}", stringify(&val));
+    //             return Ok(())
+    //         }
+    //     }
+    // }
+
+    // TODO is this cleaner?
+    fn visit_expr_statement(&self, expr: &Expr) -> Result<()> {
+        let val = self.visit_expr(expr)?;
+        return Ok(());
+    }
+
+    fn visit_print_statement(&self, expr: &Expr) -> Result<()> {
+        let val = self.visit_expr(expr)?;
+        println!("{}", stringify(&val));
+        return Ok(());
+        // Err(RuntimeError::new(Token::new(TokenType::NIL, "".to_string(), Literal::Nil, 0), "Expected print statement".to_string()))
+    }
+
+    fn visit_var_statement(&mut self, var: &Variable) -> Result<()> {
+        // at this point we surely need to save the value in the environment
+        let val = self.visit_expr(&var.initializer)?;
+        self.environment.values.insert(var.name.lexeme.clone(), val);
+        return Ok(());
+    }
+}
+
 
 //NB: I don't think with this matching system, we need to "check number operand"
 impl ExprVisitor<Result<Value>> for Interp {
-    fn visit_expr(&self, expr: &Expr) -> Result<Value> {
-        match expr {
-            Expr::Binary(binary) => self.visit_binary(binary),
-            Expr::Unary(unary) => self.visit_unary(unary),
-            Expr::Literal(literal) => self.visit_literal(literal),
-            Expr::Grouping(grouping) => self.visit_grouping(grouping),
-        }
-    }
     fn visit_binary(&self, binary: &Binary) -> Result<Value> {
         let l = self.visit_expr(&binary.left)?;
         let r = self.visit_expr(&binary.right)?;
@@ -118,6 +180,22 @@ impl ExprVisitor<Result<Value>> for Interp {
     fn visit_literal(&self, literal: &Literal) -> Result<Value> {
         Ok(literal.val())
     }
+
+    fn visit_variable(&self, token: &Token) -> Result<Value> {
+        let value = self.environment.values.get(&token.lexeme).cloned();
+        let foo = value.ok_or(RuntimeError::new(token.clone(), "couldn't visit variable".to_string()));
+        foo
+        // or(
+        //     RuntimeError::new(token.clone(), "couldn't visit variable".to_string())
+        // );
+        // value
+
+
+        // Ok(variable.name.literal.val())
+        // format!("var:{}", token.lexeme).to_string()
+    }
+
+    fn visit_null(&self) -> Result<Value> { Ok(Value::Nil) }
 }
 
 fn is_equal(a: &Value, b: &Value) -> bool {
@@ -200,28 +278,56 @@ mod test {
         let vec: Vec<i32> = vec![1,2,3];
         println!("vec[3]: {:?}", vec.first().ok_or(RuntimeError::new(temp, "vec[3]".to_string())));
 
-        let my_string = String::from("2 * (3 -\"muffin\")");
-        // let my_string = String::from("1 + 2.2 * 3");
+        // // let my_string = String::from("2 * (3 -\"muffin\")");
+        // let my_string = String::from("1 + 2.2 * 3; 10*5;");
+        // // let my_string: String = String::from("\"hi there\" + \" how are you\"");
+        // let mut my_scanner = Scanner::new(my_string.clone());
+        // let tokens = my_scanner.scan_tokens();
+        // println!("tokens: {tokens:?}");
+
+        // let mut my_parser = Parser::new(tokens);
+        // let expr = my_parser.parse().unwrap();
+        // println!("expr: {expr:?}");
+
+        // let mut my_scanner = Scanner::new(my_string.clone());
+        // let tokens = my_scanner.scan_tokens();
+        // let mut my_parser = Parser::new(tokens);
+        // let stmts = my_parser.parse_statements();
+        // for stmt in &stmts{
+        //     println!("stmt: {stmt:?}");
+        // }
+
+
+        // my_parser.advance();
+        // let expr2 = my_parser.expression();
+
+        // let printer = Printer;
+        // let out = printer.print(&expr);
+        // println!("printed: {out}");
+
+        let mut my_interpreter = Interp::new();
+        // let out = my_interpreter.visit_expr(&expr);
+        // println!("interpreted: {:?}", out);
+        // my_interpreter.interpret(&expr);
+        // println!("is truthy: {:?}", is_truthy(&out));
+
+
+
+        // let my_string = String::from("2 * (3 -\"muffin\")");
+        // let my_string = String::from("print 1 + 2.2 * 3; print 10*5;");
+        let my_string = String::from("print 2*3; var x = 3; print x;");
         // let my_string: String = String::from("\"hi there\" + \" how are you\"");
-        let mut my_scanner = Scanner::new(my_string);
+        let mut my_scanner = Scanner::new(my_string.clone());
         let tokens = my_scanner.scan_tokens();
         println!("tokens: {tokens:?}");
 
         let mut my_parser = Parser::new(tokens);
-        let expr = my_parser.parse().unwrap();
-        println!("expr: {expr:?}");
-        // my_parser.advance();
-        // let expr2 = my_parser.expression();
+        let stmts = my_parser.parse();
+        for stmt in &stmts{
+            println!("stmt: {stmt:?}");
+        }
 
-        let printer = Printer;
-        let out = printer.print(&expr);
-        println!("printed: {out}");
-
-        let my_interpreter = Interp;
-        // let out = my_interpreter.visit_expr(&expr);
-        // println!("interpreted: {:?}", out);
-        my_interpreter.interpret(&expr);
-        // println!("is truthy: {:?}", is_truthy(&out));
+        my_interpreter.interpret_stmts(&stmts);
         
     }
 }

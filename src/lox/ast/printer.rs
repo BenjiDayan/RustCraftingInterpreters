@@ -1,4 +1,6 @@
-use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Unary};
+use crate::token_type::Token;
+
+use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Unary, Variable};
 
 pub struct Printer;
 impl Printer {
@@ -17,15 +19,6 @@ impl Printer {
 
 // Printer is allowed to visit expressions
 impl ExprVisitor<String> for Printer {
-    fn visit_expr(&self, expr: &Expr) -> String {
-        match expr {
-            Expr::Binary(binary) => self.visit_binary(binary),
-            Expr::Unary(unary) => self.visit_unary(unary),
-            Expr::Literal(literal) => self.visit_literal(literal),
-            Expr::Grouping(grouping) => self.visit_grouping(grouping),
-        }
-    }
-
     fn visit_binary(&self, binary: &Binary) -> String {
         self.parenthesize(&binary.operator.lexeme, vec![&binary.left, &binary.right])
     }
@@ -46,6 +39,12 @@ impl ExprVisitor<String> for Printer {
             Literal::Boolean(val) => val.to_string()
         }
     }
+
+    fn visit_variable(&self, token: &Token) -> String {
+        format!("var:{}", token.lexeme).to_string()
+    }
+
+    fn visit_null(&self) -> String { "null".to_string() }
 }
 
 #[cfg(test)]

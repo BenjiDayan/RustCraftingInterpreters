@@ -1,10 +1,12 @@
 use crate::lox::ast;
-use crate::lox::ast::{Expr, Binary, Unary, Grouping};
+use crate::lox::ast::{Expr, Binary, Unary, Grouping, Stmt};
 use crate::token_type::{Literal,
     Token, TokenType};
 use crate::lox::error;
 
 use std::error::Error;
+
+use super::Variable;
 
 
 
@@ -21,9 +23,66 @@ impl Parser {
             current: 0
         }
     }
+    pub fn parse(&mut self) -> Vec<Stmt> {
+        let mut out = Vec::new();
+        while !self.is_at_end() {
+            out.push(self.declaration().unwrap());
+        }
+        out
+    }
 
+    //TODO add in ParseError's. And synchronize??
+    fn declaration(&mut self) -> Result<Stmt, Box<dyn Error>> {
+        // we only allow var declarations at this level,
+        // i.e. top level - so within control statements not longer allowed
+        // to var_decl I guess?
+        let res = if self.match_types(&[TokenType::VAR]) {
+            self.var_declaration()
+        } else {
+            self.statement()
+        };
+        return res;
+        // res.unwrap_or_else()
+        //synchronize? 
+    }
 
-    pub fn parse(&mut self) -> Option<Expr>{
+    fn var_declaration(&mut self) -> Result<Stmt, Box<dyn Error>> {
+        // either "name;" or "name = expr;"
+        let name = self.consume(TokenType::IDENTIFIER, "expected IDENTIFIER in var declaration");
+        if self.match_types(&[TokenType::EQUAL]) {
+            let initializer = self.expression()?;
+            self.consume(TokenType::SEMICOLON, "Expected ';' after value");
+            return Ok(Stmt::Var(Variable{name: name, initializer: initializer}))
+        } else {
+            let initializer = Expr::Null;  // TODO I made this up? Is that ok?
+            self.consume(TokenType::SEMICOLON, "Expected ';' after value");
+            return Ok(Stmt::Var(Variable{name: name, initializer: initializer}))
+        }
+    }
+
+    fn statement(&mut self) -> Result<Stmt, Box<dyn Error>> {
+        if self.match_types(&[TokenType::PRINT]) {
+            self.print_statement()
+        } else {
+            self.expr_statement()
+        }
+        //placeholder
+        // Stmt::Print(Expr::Literal(Literal::Nil))
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt, Box<dyn Error>> {
+        let expr = self.expression()?;
+        self.consume(TokenType::SEMICOLON, "Expected ';' after value");
+        Ok(Stmt::Print(expr))
+    }
+
+    fn expr_statement(&mut self) -> Result<Stmt, Box<dyn Error>> {
+        let expr = self.expression()?;
+        self.consume(TokenType::SEMICOLON, "Expected ';' after expression");
+        Ok(Stmt::Expression(expr))
+    }
+
+    pub fn parse_expr(&mut self) -> Option<Expr>{
         self.expression().ok()
     }
 
@@ -113,7 +172,7 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, Box<dyn Error>> {
         let current_token = self.peek();
-        // println!("current_token in primary: {current_token:?}");
+        println!("current_token in primary: {current_token:?}");
 
 
         let out_token = match current_token {
@@ -131,6 +190,12 @@ impl Parser {
                 self.consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
                 return Ok(Expr::Grouping(Grouping(Box::new(expr))))
             }
+
+            // We store a Expression::Variable that will point to (via environment) a
+            // Variable object
+            Token{token_type: TokenType::IDENTIFIER, ..} => {
+                Expr::Variable(current_token.clone())
+            } 
             // I feel like this is not meant to happen
             _ => {
                 println!("catch all not meant to happen!!");
@@ -150,7 +215,10 @@ impl Parser {
     }
     
     fn consume(&mut self, token_type: TokenType, message: &str) -> Token{
-        if self.check(token_type) {println!("consumed {token_type:?}"); return self.advance()}
+        if self.check(token_type) {
+            println!("consumed {token_type:?}");
+            return self.advance()
+        }
         let token = self.peek();
         error(token, message);
         // TODO why doesn't compile if comment out bottom?

@@ -173,7 +173,7 @@ mod test {
         println!("tokens: {tokens:?}");
 
         let mut my_parser = Parser::new(tokens);
-        let expr = my_parser.parse().unwrap();
+        let expr = my_parser.parse_expr().unwrap();
         println!("expr: {expr:?}");
         // my_parser.advance();
         // let expr2 = my_parser.expression();

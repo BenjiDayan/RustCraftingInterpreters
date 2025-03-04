@@ -5,8 +5,22 @@ use crate::token_type::Value;
 
 pub mod parser;
 pub mod printer;
-pub mod interpreter_old;
+pub mod environment;
+// pub mod interpreter_old;
 pub mod interpreter;
+
+#[derive(Debug, Clone)]
+pub enum Stmt {
+    Expression(Expr),
+    Print(Expr),
+    Var(Variable)
+}
+
+#[derive(Debug, Clone)]
+pub struct Variable {
+    name: Token,
+    initializer: Expr
+}
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -14,7 +28,9 @@ pub enum Expr {
     Unary(Unary),
     Grouping(Grouping),
     // LiteralExpr(LiteralExpr),
-    Literal(Literal)
+    Literal(Literal),
+    Variable(Token), // Token(IDENTIFIER, name, NIL, )
+    Null
 }
 
 #[derive(Debug, Clone)]
@@ -41,11 +57,37 @@ pub struct Grouping(Box<Expr>);
 // TODO: make this Derive-able
 pub trait ExprVisitor<T> {
     // NOTE: would it be better to make these associated functions without &self?
-    fn visit_expr(&self, expr: &Expr) -> T;
+    // fn visit_expr(&self, expr: &Expr) -> T;
+    fn visit_expr(&self, expr: &Expr) -> T {
+            match expr {
+            Expr::Binary(binary) => self.visit_binary(binary),
+            Expr::Unary(unary) => self.visit_unary(unary),
+            Expr::Literal(literal) => self.visit_literal(literal),
+            Expr::Grouping(grouping) => self.visit_grouping(grouping),
+            Expr::Variable(token) => self.visit_variable(token),
+            Expr::Null => self.visit_null(),
+        }
+    }
     fn visit_binary(&self, binary: &Binary) -> T;
     fn visit_unary(&self, unary: &Unary) -> T;
     fn visit_literal(&self, literal: &Literal) -> T;
     fn visit_grouping(&self, grouping: &Grouping) -> T;
+    fn visit_variable(&self, token: &Token) -> T;
+    fn visit_null(&self) -> T;
+}
+
+// wtf?? unclear if we actually need this??
+pub trait StmtVisitor<T> {
+    fn visit_statement(&mut self, stmt: &Stmt) -> T {
+        match stmt {
+            Stmt::Expression(expr) => self.visit_expr_statement(expr),
+            Stmt::Print(expr) => self.visit_print_statement(expr),
+            Stmt::Var(var) => self.visit_var_statement(var),
+        }
+    }
+    fn visit_expr_statement(&self, expr: &Expr) -> T;
+    fn visit_print_statement(&self, expr: &Expr) -> T;
+    fn visit_var_statement(&mut self, var: &Variable) -> T;
 }
 
 
@@ -65,14 +107,23 @@ impl Printer {
 }
 
 impl ExprVisitor<String> for Printer {
-    fn visit_expr(&self, expr: &Expr) -> String {
-        match expr {
-            Expr::Binary(binary) => self.visit_binary(binary),
-            Expr::Unary(unary) => self.visit_unary(unary),
-            Expr::Literal(literal) => self.visit_literal(literal),
-            Expr::Grouping(grouping) => self.visit_grouping(grouping),
-        }
-    }
+    // Instead of having every Expr subclass have an .accept(ExprVisitor<R>) method
+    // which returns ExprVisitor<R>.visit_mysubclass(), instead I've defined this
+    // visit_epxr method which uses match to dispatch efficiently (I believe?) to
+    // the right visit_mysubclass method.
+    // I.e. accept on the subclasses is replaced by one visit_mysubclass multimatching
+    // on this here implementation.
+    // but this is actually wasted code - we should have this be a one-off surely?
+    // a generic?? like it should be defined on ExprVisitor<R> instead.
+    // TODO confirm if that's
+    // fn visit_expr(&self, expr: &Expr) -> String {
+    //     match expr {
+    //         Expr::Binary(binary) => self.visit_binary(binary),
+    //         Expr::Unary(unary) => self.visit_unary(unary),
+    //         Expr::Literal(literal) => self.visit_literal(literal),
+    //         Expr::Grouping(grouping) => self.visit_grouping(grouping),
+    //     }
+    // }
 
     fn visit_binary(&self, binary: &Binary) -> String {
         self.parenthesize(&binary.operator.lexeme, vec![&binary.left, &binary.right])
@@ -93,6 +144,14 @@ impl ExprVisitor<String> for Printer {
             Literal::Boolean(val) => val.to_string(),
             Literal::Nil => "nil".to_owned(),
         }
+    }
+
+    fn visit_variable(&self, token: &Token) -> String {
+        format!("var {}", token.lexeme)
+    }
+
+    fn visit_null(&self) -> String {
+        "nil".to_owned()
     }
 }
 

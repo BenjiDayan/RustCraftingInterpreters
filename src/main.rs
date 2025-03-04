@@ -16,6 +16,9 @@ mod scanner;
 static mut HAD_ERROR: bool = false;
 static mut HAD_RUNTIME_ERROR: bool = false;
 
+static mut my_interpreter: std::sync::LazyLock<Interp> = std::sync::LazyLock::new(|| Interp::new());
+
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     dbg!(&args);
@@ -26,6 +29,7 @@ fn main() {
     println!("{}", word.chars().nth(3).unwrap());
 
     println!("token type: {:?}", TokenType::LEFT_PAREN);
+    println!("{}", 1.0/0.0);
 
 
     // let boo: Binary = Binary {
@@ -142,10 +146,16 @@ fn run(source: &String) {
     }
 
     let mut my_parser = parser::Parser::new(tokens);
-    let expr = my_parser.parse().unwrap();
+    // let expr = my_parser.parse().unwrap();
 
-    let mut my_interpreter = Interp;
-    my_interpreter.interpret(&expr);
+    // unsafe {
+    //     my_interpreter.interpret(&expr);
+    // }
+
+    let stmts = my_parser.parse();
+    unsafe {
+        my_interpreter.get_mut().interpret_stmts(&stmts);
+    }
 }
 
 pub fn error(line: usize, message: &str) {
