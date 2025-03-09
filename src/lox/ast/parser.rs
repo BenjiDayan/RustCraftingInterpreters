@@ -6,7 +6,7 @@ use crate::lox::error;
 
 use std::error::Error;
 
-use super::Variable;
+use super::{Variable, interpreter::RuntimeError};
 
 
 
@@ -26,13 +26,36 @@ impl Parser {
     pub fn parse(&mut self) -> Vec<Stmt> {
         let mut out = Vec::new();
         while !self.is_at_end() {
-            out.push(self.declaration().unwrap());
+            // out.push(self.declaration().unwrap());
+            match self.declaration() {
+                Ok(stmt) => out.push(stmt),
+                Err(e) => {
+                    error(&e.token, &e.message);
+                    self.synchronise();
+                }
+            }
         }
         out
     }
 
+    fn synchronise(&mut self) {
+        //discard tokens until at the beginning of the next declaration
+        self.advance();
+        while !self.is_at_end() {
+            if self.previous().token_type == TokenType::SEMICOLON {return;}
+
+            match self.peek().token_type {
+                TokenType::CLASS |TokenType::FUN |TokenType::VAR |
+                TokenType::FOR |TokenType::IF |TokenType::WHILE |
+                TokenType::PRINT |TokenType::RETURN => {return;}
+                _ => {self.advance();}
+            }
+
+        }
+    }
+
     //TODO add in ParseError's. And synchronize??
-    fn declaration(&mut self) -> Result<Stmt, Box<dyn Error>> {
+    fn declaration(&mut self) -> Result<Stmt, RuntimeError> {
         // we only allow var declarations at this level,
         // i.e. top level - so within control statements not longer allowed
         // to var_decl I guess?
@@ -46,21 +69,24 @@ impl Parser {
         //synchronize? 
     }
 
-    fn var_declaration(&mut self) -> Result<Stmt, Box<dyn Error>> {
+    fn var_declaration(&mut self) -> Result<Stmt, RuntimeError> {
         // either "name;" or "name = expr;"
-        let name = self.consume(TokenType::IDENTIFIER, "expected IDENTIFIER in var declaration");
+        let name = self.consume(TokenType::IDENTIFIER, "expected IDENTIFIER in var declaration")?;
         if self.match_types(&[TokenType::EQUAL]) {
             let initializer = self.expression()?;
-            self.consume(TokenType::SEMICOLON, "Expected ';' after value");
+            self.consume(TokenType::SEMICOLON, "Expected ';' after value")?;
             return Ok(Stmt::Var(Variable{name: name, initializer: initializer}))
         } else {
-            let initializer = Expr::Null;  // TODO I made this up? Is that ok?
-            self.consume(TokenType::SEMICOLON, "Expected ';' after value");
+            // We set uninitialised variables to Nil. This seeems reasonable, although
+            // we could instead raise a runtime error if accessing a non-initialised
+            // variable.
+            let initializer = Expr::Null;
+            self.consume(TokenType::SEMICOLON, "Expected ';' after value")?;
             return Ok(Stmt::Var(Variable{name: name, initializer: initializer}))
         }
     }
 
-    fn statement(&mut self) -> Result<Stmt, Box<dyn Error>> {
+    fn statement(&mut self) -> Result<Stmt, RuntimeError> {
         if self.match_types(&[TokenType::PRINT]) {
             self.print_statement()
         } else {
@@ -70,15 +96,15 @@ impl Parser {
         // Stmt::Print(Expr::Literal(Literal::Nil))
     }
 
-    fn print_statement(&mut self) -> Result<Stmt, Box<dyn Error>> {
+    fn print_statement(&mut self) -> Result<Stmt, RuntimeError> {
         let expr = self.expression()?;
-        self.consume(TokenType::SEMICOLON, "Expected ';' after value");
+        self.consume(TokenType::SEMICOLON, "Expected ';' after value")?;
         Ok(Stmt::Print(expr))
     }
 
-    fn expr_statement(&mut self) -> Result<Stmt, Box<dyn Error>> {
+    fn expr_statement(&mut self) -> Result<Stmt, RuntimeError> {
         let expr = self.expression()?;
-        self.consume(TokenType::SEMICOLON, "Expected ';' after expression");
+        self.consume(TokenType::SEMICOLON, "Expected ';' after expression")?;
         Ok(Stmt::Expression(expr))
     }
 
@@ -86,11 +112,11 @@ impl Parser {
         self.expression().ok()
     }
 
-    fn expression(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn expression(&mut self) -> Result<Expr, RuntimeError> {
         self.equality()
     }
 
-    fn equality(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn equality(&mut self) -> Result<Expr, RuntimeError> {
         let mut expr = self.comparison()?;
         
         while self.match_types(
@@ -107,7 +133,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn comparison(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn comparison(&mut self) -> Result<Expr, RuntimeError> {
         let mut expr = self.term()?;
 
         while self.match_types(
@@ -125,7 +151,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn term(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn term(&mut self) -> Result<Expr, RuntimeError> {
         let mut expr = self.factor()?;
 
         while self.match_types(
@@ -142,7 +168,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn factor(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn factor(&mut self) -> Result<Expr, RuntimeError> {
         let mut expr = self.unary()?;
 
         while self.match_types(
@@ -161,7 +187,7 @@ impl Parser {
 
 
 
-    fn unary(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn unary(&mut self) -> Result<Expr, RuntimeError> {
         if self.match_types(&[TokenType::BANG, TokenType::MINUS]) {
             let operator = self.previous();
             let right = self.unary()?;
@@ -170,9 +196,9 @@ impl Parser {
         return self.primary()
     }
 
-    fn primary(&mut self) -> Result<Expr, Box<dyn Error>> {
+    fn primary(&mut self) -> Result<Expr, RuntimeError> {
         let current_token = self.peek();
-        println!("current_token in primary: {current_token:?}");
+        // println!("current_token in primary: {current_token:?}");
 
 
         let out_token = match current_token {
@@ -187,7 +213,7 @@ impl Parser {
             Token{token_type: TokenType::LEFT_PAREN, ..} => {
                 self.advance();  // past the '('
                 let expr = self.expression()?;
-                self.consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
+                self.consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.")?;
                 return Ok(Expr::Grouping(Grouping(Box::new(expr))))
             }
 
@@ -198,10 +224,10 @@ impl Parser {
             } 
             // I feel like this is not meant to happen
             _ => {
-                println!("catch all not meant to happen!!");
+                // println!("catch all not meant to happen!!");
                 // return Ok(Expr::Literal(Literal::String("aaah".to_string())))
-                Err("aaah2")?;
-                return Ok(Expr::Literal(Literal::String("aaah".to_string())))
+                return Err(RuntimeError{token: current_token.clone(), message: "primary unable to match".to_string()})?;
+                // return Ok(Expr::Literal(Literal::String("aaah".to_string())))
 
             }
         };
@@ -213,17 +239,29 @@ impl Parser {
         // self.advance();
         // Expr::Literal(Literal::String(placeholder.clone()))
     }
-    
-    fn consume(&mut self, token_type: TokenType, message: &str) -> Token{
+
+    fn consume(&mut self, token_type: TokenType, message: &str) -> Result<Token, RuntimeError>{
         if self.check(token_type) {
             println!("consumed {token_type:?}");
-            return self.advance()
+            return Ok(self.advance())
         }
         let token = self.peek();
-        error(token, message);
+        // error(token, message);
         // TODO why doesn't compile if comment out bottom?
-        panic!("token: {token:?} {message}");
+        // panic!("token: {token:?} {message}");
+        Err(RuntimeError{token: token.clone(), message: message.to_string()})
     }
+
+    // fn consume(&mut self, token_type: TokenType, message: &str) -> Token{
+    //     if self.check(token_type) {
+    //         println!("consumed {token_type:?}");
+    //         return self.advance()
+    //     }
+    //     let token = self.peek();
+    //     error(token, message);
+    //     // TODO why doesn't compile if comment out bottom?
+    //     panic!("token: {token:?} {message}");
+    // }
 
     fn match_types(&mut self, types: &[TokenType]) -> bool {
         for &token_type in types {

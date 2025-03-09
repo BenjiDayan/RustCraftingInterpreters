@@ -1,6 +1,8 @@
 use std::io;
 use std::io::Write;
 use std::env;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 
 
 mod token_type;
@@ -16,7 +18,7 @@ mod scanner;
 static mut HAD_ERROR: bool = false;
 static mut HAD_RUNTIME_ERROR: bool = false;
 
-static mut my_interpreter: std::sync::LazyLock<Interp> = std::sync::LazyLock::new(|| Interp::new());
+static my_interpreter: LazyLock<Mutex<Interp>> = LazyLock::new(|| Mutex::new(Interp::new()));
 
 
 fn main() {
@@ -153,11 +155,19 @@ fn run(source: &String) {
     // }
 
     let stmts = my_parser.parse();
+    // unsafe {
+    //     my_interpreter.interpret_stmts(&stmts);
+    //     // let my_interp = LazyLock::<Interp>::get_mut(&mut my_interpreter).unwrap();
+    //     // my_interp.interpret_stmts(&stmts);
+        
+    //     // interpret_stmts(&stmts)
+    // }
     unsafe {
-        my_interpreter.get_mut().interpret_stmts(&stmts);
+        my_interpreter.lock().unwrap().interpret_stmts(&stmts);
     }
 }
 
+// error while parsing / scanning?
 pub fn error(line: usize, message: &str) {
     report(line, "", message);
 }
@@ -166,6 +176,7 @@ fn report(line: usize, location: &str, message: &str) {
     eprintln!("[line {}] Error{}: {}", line, location, message);
 }
 
+// error whilst interpreting? RuntimeError contains both a token and a message.
 fn runtime_error(err: RuntimeError) {
     println!("{err:?}\n[line {}]", err.token.line);
     unsafe { HAD_RUNTIME_ERROR = true };

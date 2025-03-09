@@ -1,8 +1,5 @@
 var x = 3;
-x += 1;
-if ( x > 3 ) {
-    print( "hi!");
-}
+x = x + 1;
 
-wtf
-aaaasdf
+
+print "hello "  + "world!";

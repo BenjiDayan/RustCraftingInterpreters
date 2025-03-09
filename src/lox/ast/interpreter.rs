@@ -57,7 +57,11 @@ impl Interp {
         // visit each stmt one by one, evaluating. If any raise RuntimeError,
         // we return error. o/w finally return Ok(())
         for stmt in stmts {
-            let res = self.visit_statement(stmt)?;
+            let res = self.visit_statement(stmt).unwrap_or_else(
+                |error| {
+                    runtime_error(error);
+                }
+            );
         }
         Ok(())
     }
@@ -73,22 +77,7 @@ impl Interp {
 // but it seems that maybe this is so simple we don't setup so many trees for this.
 
 impl StmtVisitor<Result<()>> for Interp {
-    // fn visit_statement(&self, stmt: &Stmt) -> Result<()> {
-    //     match stmt {
-    //         Stmt::Expression(expr) => {
-    //             let val = self.visit_expr(expr)?;
-    //             //.expect("we evaluate the expression and discard its value. hopefully its valid");
-    //             return Ok(())
-    //         }
-    //         Stmt::Print(expr) => {
-    //             let val = self.visit_expr(expr)?;
-    //             println!("{}", stringify(&val));
-    //             return Ok(())
-    //         }
-    //     }
-    // }
 
-    // TODO is this cleaner?
     fn visit_expr_statement(&self, expr: &Expr) -> Result<()> {
         let val = self.visit_expr(expr)?;
         return Ok(());
@@ -103,6 +92,8 @@ impl StmtVisitor<Result<()>> for Interp {
 
     fn visit_var_statement(&mut self, var: &Variable) -> Result<()> {
         // at this point we surely need to save the value in the environment
+        // NB if var x; (without definition), we actually set .initializer
+        // to Expr::Null in parser.
         let val = self.visit_expr(&var.initializer)?;
         self.environment.values.insert(var.name.lexeme.clone(), val);
         return Ok(());
@@ -182,9 +173,11 @@ impl ExprVisitor<Result<Value>> for Interp {
     }
 
     fn visit_variable(&self, token: &Token) -> Result<Value> {
-        let value = self.environment.values.get(&token.lexeme).cloned();
-        let foo = value.ok_or(RuntimeError::new(token.clone(), "couldn't visit variable".to_string()));
-        foo
+        return self.environment.get(token);
+
+        // let value = self.environment.values.get(&token.lexeme).cloned();
+        // let foo = value.ok_or(RuntimeError::new(token.clone(), "couldn't visit variable".to_string()));
+        // foo
         // or(
         //     RuntimeError::new(token.clone(), "couldn't visit variable".to_string())
         // );
