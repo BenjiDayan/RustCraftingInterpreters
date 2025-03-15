@@ -1,14 +1,14 @@
 use crate::token_type::Token;
 
-use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Unary, Variable};
+use super::{Assign, Binary, Expr, ExprVisitor, Grouping, Literal, Unary, Variable};
 
 pub struct Printer;
 impl Printer {
-    pub fn print(&self, expr: &Expr) -> String {
+    pub fn print(&mut self, expr: &Expr) -> String {
         self.visit_expr(expr)
     }
     // -> "(name expr[0] expr[1] ... )"
-    fn parenthesize(&self, name: &str, expressions: Vec<&Expr>) -> String {
+    fn parenthesize(&mut self, name: &str, expressions: Vec<&Expr>) -> String {
         let mut s = format!("({}", name);
         for expr in expressions {
             s.push_str(&format!(" {}", &self.visit_expr(expr)));
@@ -19,19 +19,23 @@ impl Printer {
 
 // Printer is allowed to visit expressions
 impl ExprVisitor<String> for Printer {
-    fn visit_binary(&self, binary: &Binary) -> String {
+    fn visit_assignment(&mut self, assignment: &Assign) -> String {
+        self.parenthesize("assign=", vec![&Expr::Variable(assignment.name.clone()), &assignment.value])
+    }
+
+    fn visit_binary(&mut self, binary: &Binary) -> String {
         self.parenthesize(&binary.operator.lexeme, vec![&binary.left, &binary.right])
     }
 
-    fn visit_unary(&self, unary: &Unary) -> String {
+    fn visit_unary(&mut self, unary: &Unary) -> String {
         self.parenthesize(&unary.operator.lexeme, vec![&unary.right])
     }
 
-    fn visit_grouping(&self, grouping: &Grouping) -> String {
+    fn visit_grouping(&mut self, grouping: &Grouping) -> String {
         self.parenthesize("group", vec![&grouping.0])
     }
 
-    fn visit_literal(&self, literal: &Literal) -> String {
+    fn visit_literal(&mut self, literal: &Literal) -> String {
         match literal {
             Literal::String(val) => val.clone(),
             Literal::Number(val) => val.to_string(),
@@ -40,11 +44,11 @@ impl ExprVisitor<String> for Printer {
         }
     }
 
-    fn visit_variable(&self, token: &Token) -> String {
+    fn visit_variable(&mut self, token: &Token) -> String {
         format!("var:{}", token.lexeme).to_string()
     }
 
-    fn visit_null(&self) -> String { "null".to_string() }
+    fn visit_null(&mut self) -> String { "null".to_string() }
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use crate::lox::ast;
-use crate::lox::ast::{Expr, Binary, Unary, Grouping, Stmt};
+use crate::lox::ast::{Expr, Binary, Unary, Grouping, Stmt, Assign};
 use crate::token_type::{Literal,
     Token, TokenType};
 use crate::lox::error;
@@ -89,6 +89,10 @@ impl Parser {
     fn statement(&mut self) -> Result<Stmt, RuntimeError> {
         if self.match_types(&[TokenType::PRINT]) {
             self.print_statement()
+        } else if self.match_types(&[TokenType::LEFT_BRACE]) {
+            // This is a Stmt::Block(Vec<Stmt>), unlike the other
+            // foolish single Stmt types.
+            self.block_statement()
         } else {
             self.expr_statement()
         }
@@ -102,6 +106,15 @@ impl Parser {
         Ok(Stmt::Print(expr))
     }
 
+    fn block_statement(&mut self) -> Result<Stmt, RuntimeError> {
+        let mut statements: Vec<Stmt> = Vec::new();
+
+        while !self.check(TokenType::RIGHT_BRACE) && !self.is_at_end() {
+            statements.push(self.var_declaration()?)
+        }
+        Ok(Stmt::Block(statements))
+    }
+
     fn expr_statement(&mut self) -> Result<Stmt, RuntimeError> {
         let expr = self.expression()?;
         self.consume(TokenType::SEMICOLON, "Expected ';' after expression")?;
@@ -113,7 +126,25 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Expr, RuntimeError> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, RuntimeError> {
+        let expr = self.equality()?;
+        if self.match_types(&[TokenType::EQUAL]) {
+            let equals_token = self.previous();
+            if let Expr::Variable ( token ) = expr {
+                // Letting right be of type self.assignment, not one precedence level down
+                // I think makes this right associative?
+                let right = self.assignment()?;
+                return Ok(Expr::Assign(Assign{name: token, value: Box::new(right)}))
+            } else {
+                return Err(RuntimeError{token: equals_token , message: "trailing equal sign in non assignment expression??".to_string()})?;
+            }
+        } else {
+            // return Err(RuntimeError{token: self.previous() , message: "trailing equal sign in non assignment expression??".to_string()})?;
+            return Ok(expr);
+        }
     }
 
     fn equality(&mut self) -> Result<Expr, RuntimeError> {
@@ -315,7 +346,7 @@ mod test {
     fn test_parser() {
         println!("hi TEST START");
 
-        let my_string = String::from("1 == 3 + 4");
+        let my_string = String::from("x = 3;");
         let mut my_scanner = Scanner::new(my_string);
         let tokens = my_scanner.scan_tokens();
         println!("tokens: {tokens:?}");

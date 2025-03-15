@@ -17,9 +17,10 @@ mod scanner;
 
 static mut HAD_ERROR: bool = false;
 static mut HAD_RUNTIME_ERROR: bool = false;
-
-static my_interpreter: LazyLock<Mutex<Interp>> = LazyLock::new(|| Mutex::new(Interp::new()));
-
+static my_interpreter: LazyLock<Mutex<Interp>> = LazyLock::new(|| {
+    let interp = Interp::new();
+    Mutex::new(interp)
+});
 
 fn main() {
     let args: Vec<String> = env::args().collect();

@@ -1,7 +1,7 @@
 use crate::TokenType;
 
 use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Stmt, StmtVisitor, Token, Unary, Value, Variable, environment::Environment};
-use std::{any::{Any, TypeId}, fmt};
+use std::{any::{Any, TypeId}, cell::RefCell, fmt, rc::Rc, sync::Arc, sync::Mutex};
 
 // use main::runtime_error func
 use crate::runtime_error;
@@ -15,7 +15,7 @@ pub struct Interp {
 impl Interp {
     pub fn new() -> Self {
         Self {
-            environment: Environment::new()
+            environment: Environment::new(None)
         }
     }
 }
@@ -39,7 +39,7 @@ pub fn stringify(val: &Value) -> String {
 }
 
 impl Interp {
-    pub fn interpret(&self, expr: &Expr) {
+    pub fn interpret(&mut self, expr: &Expr) {
         let out = self.visit_expr(expr);
         if let Ok(val) = &out {
             let val_string: String = stringify(&val);
@@ -78,16 +78,33 @@ impl Interp {
 
 impl StmtVisitor<Result<()>> for Interp {
 
-    fn visit_expr_statement(&self, expr: &Expr) -> Result<()> {
+    fn visit_expr_statement(&mut self, expr: &Expr) -> Result<()> {
         let val = self.visit_expr(expr)?;
         return Ok(());
     }
 
-    fn visit_print_statement(&self, expr: &Expr) -> Result<()> {
+    fn visit_print_statement(&mut self, expr: &Expr) -> Result<()> {
         let val = self.visit_expr(expr)?;
         println!("{}", stringify(&val));
         return Ok(());
         // Err(RuntimeError::new(Token::new(TokenType::NIL, "".to_string(), Literal::Nil, 0), "Expected print statement".to_string()))
+    }
+
+    fn visit_block_statement(&mut self, statements: &Vec<Stmt>) -> Result<()> {
+        // Create new environment
+        let mut new_env = Environment::new(self.environment.enclosing_env);
+        let mut prev_env = self.environment;
+        self.environment = new_env;
+
+
+        // Execute block
+        for stmt in statements {    
+            self.visit_statement(stmt)?;
+        }
+
+        // Restore original environment
+        self.environment = prev_env;
+        Ok(())
     }
 
     fn visit_var_statement(&mut self, var: &Variable) -> Result<()> {
@@ -95,7 +112,7 @@ impl StmtVisitor<Result<()>> for Interp {
         // NB if var x; (without definition), we actually set .initializer
         // to Expr::Null in parser.
         let val = self.visit_expr(&var.initializer)?;
-        self.environment.values.insert(var.name.lexeme.clone(), val);
+        self.environment.define(&var.name.lexeme, &val);
         return Ok(());
     }
 }
@@ -103,7 +120,19 @@ impl StmtVisitor<Result<()>> for Interp {
 
 //NB: I don't think with this matching system, we need to "check number operand"
 impl ExprVisitor<Result<Value>> for Interp {
-    fn visit_binary(&self, binary: &Binary) -> Result<Value> {
+    fn visit_assignment(&mut self, assignment: &super::Assign) -> Result<Value> {
+        if let Ok(value_old) = self.environment.get(&assignment.name) {
+            let value_new = self.visit_expr(&assignment.value)?;
+            // println!("new value: {:?}", value_new);
+            self.environment.assign(&assignment.name, &value_new);
+            // println!("{}", assignment.name.to_string());
+            Ok(value_new)
+        } else {
+            Err(RuntimeError::new(assignment.name.clone(), format!("Undefined variable '{}'.", assignment.name.lexeme)))
+        }
+    }
+
+    fn visit_binary(&mut self, binary: &Binary) -> Result<Value> {
         let l = self.visit_expr(&binary.left)?;
         let r = self.visit_expr(&binary.right)?;
 
@@ -143,7 +172,7 @@ impl ExprVisitor<Result<Value>> for Interp {
     }
 
 
-    fn visit_unary(&self, unary: &Unary) -> Result<Value> {
+    fn visit_unary(&mut self, unary: &Unary) -> Result<Value> {
         let value = self.visit_expr(&unary.right)?;
         match unary.operator.token_type {
             TokenType::MINUS => {
@@ -164,15 +193,15 @@ impl ExprVisitor<Result<Value>> for Interp {
         }
     }
 
-    fn visit_grouping(&self, grouping: &Grouping) -> Result<Value> {
+    fn visit_grouping(&mut self, grouping: &Grouping) -> Result<Value> {
         self.visit_expr(&grouping.0)
     }
 
-    fn visit_literal(&self, literal: &Literal) -> Result<Value> {
+    fn visit_literal(&mut self, literal: &Literal) -> Result<Value> {
         Ok(literal.val())
     }
 
-    fn visit_variable(&self, token: &Token) -> Result<Value> {
+    fn visit_variable(&mut self, token: &Token) -> Result<Value> {
         return self.environment.get(token);
 
         // let value = self.environment.values.get(&token.lexeme).cloned();
@@ -188,7 +217,7 @@ impl ExprVisitor<Result<Value>> for Interp {
         // format!("var:{}", token.lexeme).to_string()
     }
 
-    fn visit_null(&self) -> Result<Value> { Ok(Value::Nil) }
+    fn visit_null(&mut self) -> Result<Value> { Ok(Value::Nil) }
 }
 
 fn is_equal(a: &Value, b: &Value) -> bool {
