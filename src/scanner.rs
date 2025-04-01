@@ -188,9 +188,8 @@ impl Scanner {
         // start is at " so + 1, and current is at "+1, so -1 to get the contents
         //"my_string" -> my_string
         let value: String = self.source[self.start+1..self.current-1].to_string();
-        println!("{value}, {0}, {1}", self.start, self.current);
+        // println!("{value}, {0}, {1}", self.start, self.current);
         self.add_token2(TokenType::STRING, Some(Literal::String(value)));
-        println!("finished adding!");
         
     }
 

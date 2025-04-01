@@ -1,6 +1,6 @@
 use crate::TokenType;
 
-use super::{Binary, Expr, ExprVisitor, Grouping, Literal, Stmt, StmtVisitor, Token, Unary, Value, Variable, environment::Environment};
+use super::{environment::Environment, Binary, Clock, Expr, ExprVisitor, Grouping, Literal, Logical, LoxCallable, NullFunc, Stmt, StmtVisitor, Token, Unary, Value, Variable};
 use std::{any::{Any, TypeId}, cell::RefCell, fmt, rc::Rc, sync::Arc, sync::Mutex};
 
 // use main::runtime_error func
@@ -9,13 +9,20 @@ use crate::runtime_error;
 
 
 pub struct Interp {
-    environment: Environment
+    environment: Arc<Mutex<Environment>>,
+    globals: Arc<Mutex<Environment>>
 }
 
 impl Interp {
     pub fn new() -> Self {
+        let globals = Environment::new(None);
+        // globals.define(
+        //     &"clock".to_string(),
+        //     Clock
+        // );
         Self {
-            environment: Environment::new(None)
+            environment: Arc::new(Mutex::new(Environment::new(None))),
+            globals: Arc::new(Mutex::new(globals))
         }
     }
 }
@@ -39,6 +46,10 @@ pub fn stringify(val: &Value) -> String {
 }
 
 impl Interp {
+    pub fn evaluate(&mut self, expr: &Expr) -> Result<Value> {
+        self.visit_expr(expr)
+    }
+
     pub fn interpret(&mut self, expr: &Expr) {
         let out = self.visit_expr(expr);
         if let Ok(val) = &out {
@@ -65,6 +76,21 @@ impl Interp {
         }
         Ok(())
     }
+
+    pub fn execute_block(&mut self, statements: &Vec<Stmt>, mut environment: Arc<Mutex<Environment>>) -> Result<()>{
+        std::mem::swap(&mut self.environment, &mut environment);
+        
+        // Execute block with new environment
+        let result = (|| {
+            for stmt in statements {    
+                self.visit_statement(stmt)?;
+            }
+            Ok(())
+        })();
+
+        std::mem::swap(&mut self.environment, &mut environment);
+        result
+    }
 }
 
 
@@ -75,6 +101,8 @@ impl Interp {
 
 // Stmt -> expression / print -> Expr
 // but it seems that maybe this is so simple we don't setup so many trees for this.
+
+
 
 impl StmtVisitor<Result<()>> for Interp {
 
@@ -90,21 +118,49 @@ impl StmtVisitor<Result<()>> for Interp {
         // Err(RuntimeError::new(Token::new(TokenType::NIL, "".to_string(), Literal::Nil, 0), "Expected print statement".to_string()))
     }
 
-    fn visit_block_statement(&mut self, statements: &Vec<Stmt>) -> Result<()> {
-        // Create new environment
-        let mut new_env = Environment::new(self.environment.enclosing_env);
-        let mut prev_env = self.environment;
-        self.environment = new_env;
-
-
-        // Execute block
-        for stmt in statements {    
-            self.visit_statement(stmt)?;
+    fn visit_if_statement(&mut self, if_stmt: &super::IfStmt) -> Result<()> {
+        if is_truthy(&self.evaluate(&if_stmt.condition)?) {
+            self.visit_statement(&if_stmt.if_branch)
+        } else if let Some(else_stmt) = &if_stmt.else_branch {
+            self.visit_statement(else_stmt)
+        } else {
+            Ok(())  // else branch was null so no statement to visit.
         }
+    }
 
-        // Restore original environment
-        self.environment = prev_env;
+    fn visit_while_statement(&mut self, while_stmt: &super::WhileStmt) -> Result<()> {
+        while (is_truthy(&self.evaluate(&while_stmt.condition)?)) {
+            self.visit_statement(&while_stmt.body)?
+        }
         Ok(())
+    }
+
+    fn visit_func_statement(&mut self, func_stmt: &super::FuncStmt) -> Result<()> {
+        Ok(())
+    }
+
+    fn visit_block_statement(&mut self, statements: &Vec<Stmt>) -> Result<()> {
+        // Create new environment with current environment as enclosing
+        let block_env = Arc::new(Mutex::new(Environment::new(Some(Arc::clone(&self.environment)))));
+        
+        let result = self.execute_block(statements, block_env);
+        
+        // // Swap environments using std::mem::swap to avoid cloning
+        // let mut temp_env = block_env;
+        // std::mem::swap(&mut self.environment, &mut temp_env);
+        
+        // // Execute block with new environment
+        // let result = (|| {
+        //     for stmt in statements {    
+        //         self.visit_statement(stmt)?;
+        //     }
+        //     Ok(())
+        // })();
+
+        // // Restore previous environment
+        // std::mem::swap(&mut self.environment, &mut temp_env);
+        
+        result
     }
 
     fn visit_var_statement(&mut self, var: &Variable) -> Result<()> {
@@ -112,7 +168,7 @@ impl StmtVisitor<Result<()>> for Interp {
         // NB if var x; (without definition), we actually set .initializer
         // to Expr::Null in parser.
         let val = self.visit_expr(&var.initializer)?;
-        self.environment.define(&var.name.lexeme, &val);
+        self.environment.lock().unwrap().define(&var.name.lexeme, &val);
         return Ok(());
     }
 }
@@ -121,15 +177,19 @@ impl StmtVisitor<Result<()>> for Interp {
 //NB: I don't think with this matching system, we need to "check number operand"
 impl ExprVisitor<Result<Value>> for Interp {
     fn visit_assignment(&mut self, assignment: &super::Assign) -> Result<Value> {
-        if let Ok(value_old) = self.environment.get(&assignment.name) {
-            let value_new = self.visit_expr(&assignment.value)?;
-            // println!("new value: {:?}", value_new);
-            self.environment.assign(&assignment.name, &value_new);
-            // println!("{}", assignment.name.to_string());
-            Ok(value_new)
+        let value = self.visit_expr(&assignment.value)?;
+        self.environment.lock().unwrap().assign(&assignment.name, &value)?;
+        Ok(value)
+    }
+
+    fn visit_logical(&mut self, logical: &Logical) -> Result<Value> {
+        let left = self.evaluate(&logical.left)?;
+        if logical.operator.token_type == TokenType::OR {
+            if is_truthy(&left) {return Ok(left);}
         } else {
-            Err(RuntimeError::new(assignment.name.clone(), format!("Undefined variable '{}'.", assignment.name.lexeme)))
+            if !is_truthy(&left) {return Ok(left);}
         }
+        return self.evaluate(&logical.right);
     }
 
     fn visit_binary(&mut self, binary: &Binary) -> Result<Value> {
@@ -193,6 +253,26 @@ impl ExprVisitor<Result<Value>> for Interp {
         }
     }
 
+    fn visit_call(&mut self, call: &super::Call) -> Result<Value> {
+        let callee = self.visit_expr(&call.callee)?;  // get the function
+        // TODO - check if callee is a function
+
+        let args: Result<Vec<Value>> = call.arguments.iter().map(|arg| self.visit_expr(arg)).collect();
+        let args = args?;
+
+        // Cast LoxCallable; check that it's indeed callable??
+        let func = NullFunc; // LoxCallable
+
+        if func.arity() != args.len() {
+            return Err(RuntimeError::new(call.paren.clone(), format!(
+                "Arity mismatch: func wants: {}, # args given: {}", func.arity(), args.len())
+            ));
+        }
+
+
+        Ok(Value::Nil) // TODO!
+    }
+
     fn visit_grouping(&mut self, grouping: &Grouping) -> Result<Value> {
         self.visit_expr(&grouping.0)
     }
@@ -202,7 +282,7 @@ impl ExprVisitor<Result<Value>> for Interp {
     }
 
     fn visit_variable(&mut self, token: &Token) -> Result<Value> {
-        return self.environment.get(token);
+        return self.environment.lock().unwrap().get(token);
 
         // let value = self.environment.values.get(&token.lexeme).cloned();
         // let foo = value.ok_or(RuntimeError::new(token.clone(), "couldn't visit variable".to_string()));

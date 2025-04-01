@@ -1,0 +1,7 @@
+print "hello there";
+
+fun foo(x) {
+    print "hello " + x;
+}
+
+foo("benji");

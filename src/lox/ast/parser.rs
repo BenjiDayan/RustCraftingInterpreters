@@ -1,11 +1,11 @@
 use crate::lox::ast;
 use crate::lox::ast::{Expr, Binary, Unary, Grouping, Stmt, Assign};
-use crate::token_type::{Literal,
-    Token, TokenType};
+use crate::token_type::{self, Literal, Token, TokenType};
 use crate::lox::error;
 
 use std::error::Error;
 
+use super::{Call, FuncStmt, IfStmt, Logical, WhileStmt};
 use super::{Variable, interpreter::RuntimeError};
 
 
@@ -28,7 +28,10 @@ impl Parser {
         while !self.is_at_end() {
             // out.push(self.declaration().unwrap());
             match self.declaration() {
-                Ok(stmt) => out.push(stmt),
+                Ok(stmt) => {
+                    println!("stmt in parse: {stmt:?}");
+                    out.push(stmt);
+                }
                 Err(e) => {
                     error(&e.token, &e.message);
                     self.synchronise();
@@ -59,12 +62,16 @@ impl Parser {
         // we only allow var declarations at this level,
         // i.e. top level - so within control statements not longer allowed
         // to var_decl I guess?
-        let res = if self.match_types(&[TokenType::VAR]) {
+        if self.match_types(&[TokenType::VAR]) {
             self.var_declaration()
+
+        } else if self.match_types(&[TokenType::FUN]) {
+            self.func_declaration()
         } else {
             self.statement()
-        };
-        return res;
+        }
+        
+    
         // res.unwrap_or_else()
         //synchronize? 
     }
@@ -86,6 +93,38 @@ impl Parser {
         }
     }
 
+    fn func_declaration(&mut self) -> Result<Stmt, RuntimeError> {
+        let name = self.consume(TokenType::IDENTIFIER, "fun declaration lacking identifier")?;
+        self.consume(TokenType::LEFT_PAREN, "expect '(' after func identifier decl")?;
+
+
+        // immutable borrow here if no .clone()?
+        let current = self.peek().clone();
+        let mut parameters: Vec<Token> = Vec::new();
+        while !self.check(TokenType::RIGHT_PAREN) {
+            // error if >= 255 args
+            if parameters.len() >= 255 {
+                return Err(RuntimeError{token: current.clone(), message: "too many arguments".to_string()})?;
+            }
+            parameters.push(self.consume(TokenType::IDENTIFIER, "expected IDENTIFIER arg, got something else")?);
+            if self.check(TokenType::COMMA) {
+                self.advance();
+            }
+            // println!("args in finish_call: {args:?}");
+        }
+        self.consume(TokenType::RIGHT_PAREN, "Expected ')' after arguments")?;
+        self.consume(TokenType::LEFT_BRACE, "Expected opening brace for func body")?;
+        let body = self.block_statement()?;
+        if let Stmt::Block(body) = body {
+            return Ok(Stmt::Func(FuncStmt{
+                name,
+                parameters,
+                body
+            }));
+        }
+        Err(RuntimeError{token: name, message: "Expected block statement for function body".to_string()})
+    }
+
     fn statement(&mut self) -> Result<Stmt, RuntimeError> {
         if self.match_types(&[TokenType::PRINT]) {
             self.print_statement()
@@ -93,6 +132,12 @@ impl Parser {
             // This is a Stmt::Block(Vec<Stmt>), unlike the other
             // foolish single Stmt types.
             self.block_statement()
+        } else if self.match_types(&[TokenType::IF]) {
+            self.if_statement()
+        } else if self.match_types(&[TokenType::WHILE]) {
+            self.while_statement()
+        } else if self.match_types(&[TokenType::FOR]) {
+            self.for_statement()
         } else {
             self.expr_statement()
         }
@@ -110,9 +155,73 @@ impl Parser {
         let mut statements: Vec<Stmt> = Vec::new();
 
         while !self.check(TokenType::RIGHT_BRACE) && !self.is_at_end() {
-            statements.push(self.var_declaration()?)
+            let current = self.peek();
+            statements.push(self.declaration()?)
         }
+        self.consume(TokenType::RIGHT_BRACE, "Expected '}' after block")?;
         Ok(Stmt::Block(statements))
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, RuntimeError> {
+        self.consume(TokenType::LEFT_PAREN, "Expect '(' after IF");
+        let condition = self.expression()?;
+        self.consume(TokenType::RIGHT_PAREN, "Expected ')' closing IF condition");
+        // NB not a declaration (if we want var_decl then must be in Block Stmt)
+        let if_branch = Box::new(self.statement()?);
+        let else_branch = if self.match_types(&[TokenType::ELSE]) {
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+        return Ok(Stmt::If(IfStmt{condition, if_branch, else_branch}))
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt, RuntimeError> {
+        self.consume(TokenType::LEFT_PAREN, "Expect '(' after WHILE");
+        let condition = self.expression()?;
+        self.consume(TokenType::RIGHT_PAREN, "Expected ')' closing WHILE condition");
+        // NB not a declaration (if we want var_decl then must be in Block Stmt)
+        let body = Box::new(self.statement()?);
+        return Ok(Stmt::While(WhileStmt{condition, body}))
+    }
+
+    fn for_statement(&mut self) -> Result<Stmt, RuntimeError> {
+        self.consume(TokenType::LEFT_PAREN, "Expect '(' after FOR");
+        let initializer: Option<Stmt> = if self.match_types(&[TokenType::SEMICOLON]) {
+            None
+        } else if self.match_types(&[TokenType::VAR]) {
+            Some(self.var_declaration()?)
+        } else {
+            Some(self.expr_statement()?)
+        };
+
+        let condition = if !self.check(TokenType::SEMICOLON) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::SEMICOLON, "Expected ';' before increment in FOR");
+
+        let increment = if !self.check(TokenType::RIGHT_PAREN) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::RIGHT_PAREN, "Expected final ')' in FOR");
+        
+        let mut body = self.statement()?;
+
+        if let Some(inc) = increment {
+            body = Stmt::Block(vec![body, Stmt::Expression(inc)]);
+        }
+        let condition = condition.unwrap_or(Expr::Literal(Literal::Boolean(true)));
+        body = Stmt::While(WhileStmt{condition: condition, body: Box::new(body)});
+        
+        if let Some(init) = initializer{
+            body = Stmt::Block(vec![init, body]);
+        }
+
+        return Ok(body);
     }
 
     fn expr_statement(&mut self) -> Result<Stmt, RuntimeError> {
@@ -130,7 +239,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, RuntimeError> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
         if self.match_types(&[TokenType::EQUAL]) {
             let equals_token = self.previous();
             if let Expr::Variable ( token ) = expr {
@@ -146,6 +255,33 @@ impl Parser {
             return Ok(expr);
         }
     }
+
+    fn or(&mut self) -> Result<Expr, RuntimeError> {
+        let mut expr = self.and()?;
+        while self.match_types(&[TokenType::OR]) {
+            let operator = self.previous();
+            let right = self.and()?;
+            expr = Expr::Logical(Logical{
+                operator: operator,
+                left: Box::new(expr),
+                right: Box::new(right)});
+        }
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expr, RuntimeError> {
+        let mut expr = self.equality()?;
+        while self.match_types(&[TokenType::AND]) {
+            let operator = self.previous();
+            let right = self.equality()?;
+            expr = Expr::Logical(Logical{
+                operator: operator,
+                left: Box::new(expr),
+                right: Box::new(right)});
+        }
+        Ok(expr)
+    }
+
 
     fn equality(&mut self) -> Result<Expr, RuntimeError> {
         let mut expr = self.comparison()?;
@@ -224,7 +360,45 @@ impl Parser {
             let right = self.unary()?;
             return Ok(Expr::Unary(Unary{operator, right: Box::new(right)}))
         }
-        return self.primary()
+        return self.call()
+    }
+
+    fn call(&mut self) -> Result<Expr, RuntimeError> {
+        let mut callee = self.primary()?;
+        // println!("current token: {:?}", self.peek());
+
+        while true {
+            if self.match_types(&[TokenType::LEFT_PAREN]) {
+                let args: Vec<Expr> = self.finish_call()?;
+                let paren = self.previous();
+                callee = Expr::Call(Call{callee: Box::new(callee), paren: paren, arguments: args});
+                // println!("callee in func call: {callee:?}");
+            } else {
+                break
+            }
+        }
+        return Ok(callee);
+    }
+
+    fn finish_call(&mut self) -> Result<Vec<Expr>, RuntimeError> {
+        // immutable borrow here if no .clone()?
+        let current = self.peek().clone();
+        let mut args: Vec<Expr> = Vec::new();
+        // println!("in finish_call");
+        while !self.check(TokenType::RIGHT_PAREN) {
+            // error if >= 255 args
+            if args.len() >= 255 {
+                return Err(RuntimeError{token: current.clone(), message: "too many arguments".to_string()})?;
+            }
+            args.push(self.expression()?);
+            if self.check(TokenType::COMMA) {
+                self.advance();
+            }
+            // println!("args in finish_call: {args:?}");
+        }
+        self.consume(TokenType::RIGHT_PAREN, "Expected ')' after arguments")?;
+
+        return Ok(args);
     }
 
     fn primary(&mut self) -> Result<Expr, RuntimeError> {
@@ -273,7 +447,7 @@ impl Parser {
 
     fn consume(&mut self, token_type: TokenType, message: &str) -> Result<Token, RuntimeError>{
         if self.check(token_type) {
-            println!("consumed {token_type:?}");
+            // println!("consumed {token_type:?}");
             return Ok(self.advance())
         }
         let token = self.peek();
@@ -346,18 +520,18 @@ mod test {
     fn test_parser() {
         println!("hi TEST START");
 
-        let my_string = String::from("x = 3;");
+        let my_string = String::from("func(x, y, z)(2);");
         let mut my_scanner = Scanner::new(my_string);
         let tokens = my_scanner.scan_tokens();
         println!("tokens: {tokens:?}");
 
         let mut my_parser = Parser::new(tokens);
-        let expr = my_parser.expression().unwrap();
+        let expr = my_parser.parse_expr().unwrap();
         println!("expr: {expr:?}");
         // my_parser.advance();
         // let expr2 = my_parser.expression();
 
-        let printer = Printer;
+        let mut printer = Printer;
         let out = printer.print(&expr);
         println!("printed: {out}");
         // let out2 = printer.print(&expr2);

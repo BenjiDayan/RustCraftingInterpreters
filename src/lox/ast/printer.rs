@@ -1,6 +1,6 @@
 use crate::token_type::Token;
 
-use super::{Assign, Binary, Expr, ExprVisitor, Grouping, Literal, Unary, Variable};
+use super::{Assign, Binary, Call, Expr, ExprVisitor, Grouping, Literal, Logical, Unary, Variable};
 
 pub struct Printer;
 impl Printer {
@@ -23,12 +23,20 @@ impl ExprVisitor<String> for Printer {
         self.parenthesize("assign=", vec![&Expr::Variable(assignment.name.clone()), &assignment.value])
     }
 
+    fn visit_logical(&mut self, logical: &Logical) -> String {
+        self.parenthesize(&logical.operator.lexeme, vec![&logical.left, &logical.right])
+    }
+
     fn visit_binary(&mut self, binary: &Binary) -> String {
         self.parenthesize(&binary.operator.lexeme, vec![&binary.left, &binary.right])
     }
 
     fn visit_unary(&mut self, unary: &Unary) -> String {
         self.parenthesize(&unary.operator.lexeme, vec![&unary.right])
+    }
+    fn visit_call(&mut self, call: &Call) -> String {
+        let args: Vec<&Expr> = call.arguments.iter().collect();
+        self.parenthesize("func_call with args", args)
     }
 
     fn visit_grouping(&mut self, grouping: &Grouping) -> String {
@@ -70,7 +78,7 @@ mod test {
             right: Box::new(Expr::Grouping(Grouping(Box::new(Expr::Literal(Literal::Number(45.67),
             ))))),
         });
-        let printer = Printer;
+        let mut printer = Printer;
         let out = printer.print(&expr);
         println!("{out}");
         assert!(out == "(* (- 123) (group 45.67))")
